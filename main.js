@@ -344,7 +344,7 @@ class Player {
       for (const t of tiles) {
         if (t.type !== 'brick' && t.type !== 'question') continue;
         if (!intersect(this.rect, t)) continue;
-        if (this.prevY + this.h <= t.y + 2) hitBlock(t);
+        if (this.prevY + this.h <= t.y + Math.abs(this.vy) + 2) hitBlock(t);
       }
     }
 
@@ -367,6 +367,7 @@ class Player {
       if (axis === 'x') {
         if (this.vx > 0) { this.x = t.x - this.w; this.vx = 0; }
         else if (this.vx < 0) { this.x = t.x + t.w; this.vx = 0; }
+        return;
       } else {
         if (this.vy > 0) {
           const wasAbove = this.y + this.h - this.vy <= t.y + 2;
@@ -376,6 +377,7 @@ class Player {
             this.onGround = true; this.jumpsLeft = MAX_JUMPS;
           }
         } else if (this.vy < 0) {
+          if (t.type === 'platform') continue;
           this.y = t.y + t.h; this.vy = 0;
         }
       }
@@ -443,7 +445,49 @@ class Player {
 
 const player = new Player(TILE * 2, (ROWS - 2) * TILE - 40);
 
-// ==================== Entidades ====================
+// ==================== Estado inicial (para reinicio completo) ====================
+let initialTiles = null;
+let initialCoins = null;
+let initialPowerUps = null;
+let initialEnemies = null;
+let initialScore = 0;
+let initialCoinCount = 0;
+
+function captureInitialState() {
+  initialTiles = tiles.map(t => ({ ...t }));
+  initialCoins = coins.map(c => ({ ...c }));
+  initialPowerUps = powerUps.map(p => ({ ...p }));
+  initialEnemies = enemies.map(e => ({
+    x: e.x, y: e.y, type: e.type, state: e.state,
+    dead: e.dead, stompTimer: e.stompTimer, vx: e.vx, facing: e.facing
+  }));
+  initialScore = score;
+  initialCoinCount = coinCount;
+}
+
+function resetLevel() {
+  tiles.length = 0;
+  tiles.push(...initialTiles.map(t => ({ ...t })));
+  coins.length = 0;
+  coins.push(...initialCoins.map(c => ({ ...c })));
+  powerUps.length = 0;
+  powerUps.push(...initialPowerUps.map(p => ({ ...p })));
+  enemies.length = 0;
+  enemies.push(...initialEnemies.map(e => {
+    const en = new Enemy(e.x, e.y, e.type);
+    en.state = e.state;
+    en.dead = e.dead;
+    en.stompTimer = e.stompTimer;
+    en.vx = e.vx;
+    return en;
+  }));
+  score = initialScore;
+  coinCount = initialCoinCount;
+}
+
+captureInitialState();
+
+// ==================== Bucle ====================
 function spawnParticles(x, y, color, n) {
   for (let i = 0; i < n; i++) {
     particles.push({
@@ -702,6 +746,7 @@ function loop() {
   }
 
   if (player.dead && (pressed('ArrowUp') || pressed(' '))) {
+    resetLevel();
     player.reset(TILE * 2, (ROWS - 2) * TILE - 40);
     camX = 0;
     consume('ArrowUp'); consume(' ');
