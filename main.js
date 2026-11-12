@@ -368,6 +368,7 @@ class Player {
       if (t.type === 'coin' || t.type === 'mushroom' || t.type === 'flower') continue;
 
       if (axis === 'x') {
+        if (t.type === 'ground') continue; // El suelo no bloquea el movimiento lateral
         if (this.vx > 0) { this.x = t.x - this.w; this.vx = 0; }
         else if (this.vx < 0) { this.x = t.x + t.w; this.vx = 0; }
         return;
