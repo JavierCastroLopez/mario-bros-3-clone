@@ -427,6 +427,8 @@ class Player {
 
     ctx.fillStyle = c; ctx.fillRect(0, 0, this.w, this.h);
     ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(0, 0, this.w, this.h);
+    // Marcador brillante en el centro para rastrear la posición exacta
+    ctx.fillStyle = '#ffff00'; ctx.beginPath(); ctx.arc(this.w / 2, this.h / 2, 4, 0, Math.PI * 2); ctx.fill();
 
     if (this.state !== STATE.SMALL) {
       ctx.fillStyle = '#b8860b';
@@ -448,7 +450,7 @@ class Player {
   }
 }
 
-const player = new Player(TILE * 3, (ROWS - 2) * TILE - sizeFor(STATE.SMALL).h - 1);
+const player = new Player(canvas.width / 2, 200);
 
 // ==================== Estado inicial (para reinicio completo) ====================
 let initialTiles = null;
