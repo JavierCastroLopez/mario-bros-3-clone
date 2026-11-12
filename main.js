@@ -49,16 +49,23 @@ const COLS = 60;
 const ROWS = 16;
 const levelW = COLS * TILE;
 
-// tiles: {x, y, w, h, type}  type: 'ground' | 'platform' | 'coin' | 'mushroom' | 'flower'
+// tiles: {x, y, w, h, type, content}
+// type: 'ground' | 'platform' | 'coin' | 'mushroom' | 'flower' | 'brick' | 'question' | 'pipe' | 'used'
 const tiles = [];
 const coins = [];
 const powerUps = [];
 const fireballs = [];
 const particles = [];
 const floats = [];
+const enemies = [];
 
-function addTile(x, y, type) {
-  tiles.push({ x: x * TILE, y: y * TILE, w: TILE, h: TILE, type });
+function addTile(x, y, type, content) {
+  tiles.push({ x: x * TILE, y: y * TILE, w: TILE, h: TILE, type, content });
+}
+
+function isSolid(t) {
+  return t.type === 'ground' || t.type === 'platform' || t.type === 'brick' ||
+    t.type === 'question' || t.type === 'pipe' || t.type === 'used';
 }
 
 // Suelo base (2 filas)
@@ -66,6 +73,22 @@ for (let c = 0; c < COLS; c++) {
   addTile(c, ROWS - 1, 'ground');
   addTile(c, ROWS - 2, 'ground');
 }
+
+// Tubos verdes (colisionables, infranqueables)
+addTile(20, ROWS - 3, 'pipe'); addTile(21, ROWS - 3, 'pipe');
+addTile(20, ROWS - 4, 'pipe'); addTile(21, ROWS - 4, 'pipe');
+addTile(35, ROWS - 4, 'pipe'); addTile(36, ROWS - 4, 'pipe');
+addTile(35, ROWS - 5, 'pipe'); addTile(36, ROWS - 5, 'pipe');
+addTile(50, ROWS - 3, 'pipe'); addTile(51, ROWS - 3, 'pipe');
+addTile(50, ROWS - 4, 'pipe'); addTile(51, ROWS - 4, 'pipe');
+
+// Bloques de ladrillo (se rompen golpeando desde abajo)
+for (let c = 44; c < 48; c++) addTile(c, 11, 'brick');
+
+// Bloques de pregunta (soltan moneda/hongo/flor al golpear desde abajo)
+addTile(12, 8, 'question', 'mushroom');
+addTile(24, 7, 'question', 'coin');
+addTile(40, 6, 'question', 'flower');
 
 // Plataformas flotantes [cx, cy, largo]
 const platforms = [
@@ -77,7 +100,7 @@ platforms.forEach(([cx, cy, len]) => {
   for (let i = 0; i < len; i++) addTile(cx + i, cy, 'platform');
 });
 
-// Monedas
+// Monedas sueltas
 const coinPos = [
   [12, 7], [14, 7], [16, 7], [20, 6], [22, 6], [28, 5], [30, 5],
   [36, 6], [38, 6], [44, 7], [46, 7], [50, 5], [52, 5], [55, 6],
@@ -87,9 +110,145 @@ coinPos.forEach(([cx, cy]) => {
   coins.push({ x: cx * TILE + 8, y: cy * TILE - TILE, r: 6, taken: false });
 });
 
-// Power-ups
-powerUps.push({ x: 10 * TILE + 8, y: 5 * TILE - TILE, type: 'mushroom', taken: false, vy: 0 });
-powerUps.push({ x: 30 * TILE + 8, y: 8 * TILE - TILE, type: 'flower', taken: false, vy: 0 });
+// ==================== Enemigos ====================
+class Enemy {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // 'goomba' | 'koopa'
+    this.state = 'walk'; // 'walk' | 'shell' | 'dead'
+    this.facing = 1;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.dead = false;
+    this.stompTimer = 0;
+    if (type === 'goomba') {
+      this.w = 32;
+      this.h = 32;
+      this.walkSpeed = 0.9;
+    } else {
+      this.w = 32;
+      this.h = 32;
+      this.walkSpeed = 0.8;
+    }
+    this.vx = this.facing * this.walkSpeed;
+  }
+  get rect() { return { x: this.x, y: this.y, w: this.w, h: this.h }; }
+
+  update() {
+    if (this.state === 'dead') {
+      if (this.stompTimer > 0) this.stompTimer--;
+      return;
+    }
+
+    if (this.state === 'walk') {
+      this.vy += GRAVITY;
+      this.x += this.vx;
+      this.solidCollide('x');
+      this.y += this.vy;
+      this.solidCollide('y');
+
+      // Voltear en paredes y bordes
+      const lead = this.facing > 0 ? this.x + this.w : this.x;
+      const wallSensor = { x: lead, y: this.y + 6, w: 2, h: this.h - 12 };
+      const footSensor = { x: this.facing > 0 ? this.x + this.w - 2 : this.x, y: this.y + this.h + 1, w: 2, h: 2 };
+      let wall = false, support = false;
+      for (const t of tiles) {
+        if (!isSolid(t)) continue;
+        if (intersect(wallSensor, t)) wall = true;
+        if (intersect(footSensor, t)) support = true;
+      }
+      if (wall || !support) {
+        this.facing *= -1;
+        this.vx = this.facing * this.walkSpeed;
+        this.x += this.vx * 2;
+      }
+    } else if (this.state === 'shell') {
+      if (Math.abs(this.vx) > 0.3) {
+        // Caparazón rodando
+        this.vy += GRAVITY;
+        this.x += this.vx;
+        this.solidCollide('x');
+        this.y += this.vy;
+        this.solidCollide('y');
+        this.vx *= 0.96;
+        if (Math.abs(this.vx) < 0.3) this.vx = 0;
+      } else {
+        // Caparazón quieto, solo gravedade/suelo
+        this.vy += GRAVITY;
+        this.y += this.vy;
+        this.solidCollide('y');
+      }
+    }
+
+    // Límites del mundo
+    if (this.x < 0) { this.x = 0; this.facing = 1; this.vx = Math.abs(this.vx); }
+    if (this.x + this.w > levelW) { this.x = levelW - this.w; this.facing = -1; this.vx = -Math.abs(this.vx); }
+    if (this.y > canvas.height + 100) this.state = 'dead';
+  }
+
+  solidCollide(axis) {
+    const r = this.rect;
+    for (const t of tiles) {
+      if (!isSolid(t)) continue;
+      if (!intersect(r, t)) continue;
+      if (axis === 'x') {
+        if (this.vx > 0) { this.x = t.x - this.w; this.vx = 0; }
+        else if (this.vx < 0) { this.x = t.x + t.w; this.vx = 0; }
+      } else {
+        if (this.vy > 0) { this.y = t.y - this.h; this.vy = 0; this.onGround = true; }
+        else if (this.vy < 0) { this.y = t.y + t.h; this.vy = 0; }
+      }
+    }
+  }
+
+  draw(camX) {
+    if (this.state === 'dead') return;
+    ctx.save();
+    ctx.translate(this.x - camX, this.y);
+
+    if (this.type === 'goomba') {
+      ctx.fillStyle = '#a04000';
+      ctx.beginPath();
+      ctx.ellipse(16, 22, 14, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#7a3200';
+      ctx.fillRect(5, 22, 7, 8);
+      ctx.fillRect(20, 22, 7, 8);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(10, 12, 5, 5);
+      ctx.fillRect(17, 12, 5, 5);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(12, 14, 2, 2);
+      ctx.fillRect(19, 14, 2, 2);
+    } else {
+      // Koopa: caparazón verde
+      ctx.fillStyle = '#27ae60';
+      ctx.beginPath();
+      ctx.ellipse(16, 20, 13, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1e8449';
+      ctx.fillRect(4, 14, 24, 10);
+      if (this.state === 'walk') {
+        ctx.fillStyle = '#8bc34a';
+        ctx.fillRect(9, 2, 14, 18);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(this.facing > 0 ? 20 : 8, 8, 4, 4);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(this.facing > 0 ? 22 : 10, 9, 1, 1);
+      }
+    }
+
+    ctx.restore();
+  }
+}
+
+enemies.push(new Enemy(15 * TILE, (ROWS - 2) * TILE - 32, 'goomba'));
+enemies.push(new Enemy(17 * TILE, (ROWS - 2) * TILE - 32, 'goomba'));
+enemies.push(new Enemy(28 * TILE, (ROWS - 2) * TILE - 32, 'koopa'));
+enemies.push(new Enemy(44 * TILE, (ROWS - 2) * TILE - 32, 'koopa'));
+enemies.push(new Enemy(54 * TILE, (ROWS - 2) * TILE - 32, 'goomba'));
 
 // ==================== Jugador ====================
 class Player {
@@ -111,6 +270,7 @@ class Player {
     this.fireCd = 0;
     this.invuln = 0;
     this.dead = false;
+    this.prevY = this.y;
   }
   setSize() {
     const s = sizeFor(this.state);
@@ -162,6 +322,7 @@ class Player {
   }
 
   applyPhysics() {
+    this.prevY = this.y;
     this.vy += GRAVITY;
     if (this.dashTimer > 0) this.dashTimer--;
     if (this.dashCd > 0) this.dashCd--;
@@ -174,6 +335,15 @@ class Player {
     // Mover Y y resolver colisiones de suelo
     this.y += this.vy;
     this.resolve('y');
+
+    // Golpear bloques desde abajo (ladrillo se romve, pregunta suelta contenido)
+    if (this.vy < 0) {
+      for (const t of tiles) {
+        if (t.type !== 'brick' && t.type !== 'question') continue;
+        if (!intersect(this.rect, t)) continue;
+        if (this.prevY + this.h <= t.y + 2) hitBlock(t);
+      }
+    }
 
     // Límites del mundo
     if (this.x < 0) { this.x = 0; this.vx = 0; }
@@ -223,7 +393,7 @@ class Player {
       const feet = { x: this.x + 2, y: this.y + this.h + 1, w: this.w - 4, h: 1 };
       let support = false;
       for (const t of tiles) {
-        if ((t.type === 'ground' || t.type === 'platform') && intersect(feet, t)) { support = true; break; }
+        if (isSolid(t) && intersect(feet, t)) { support = true; break; }
       }
       this.onGround = support;
     }
@@ -313,6 +483,30 @@ function intersect(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function hitBlock(t) {
+  if (t.type === 'brick') {
+    spawnParticles(t.x + t.w / 2, t.y + t.h / 2, '#c0392b', 12);
+    addFloat(t.x + t.w / 2, t.y, '+100');
+    score += 100;
+    t.type = 'used';
+  } else if (t.type === 'question' && t.content) {
+    const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
+    spawnParticles(cx, cy, '#f1c40f', 8);
+    addFloat(cx, cy, '+50');
+    score += 50;
+    if (t.content === 'coin') {
+      coinCount++;
+      addFloat(cx, cy, '+100');
+      score += 100;
+    } else {
+      // Hongo o flor sale saltando del bloque
+      powerUps.push({ x: cx - 8, y: cy - 16, type: t.content, taken: false, vy: -2 });
+    }
+    t.type = 'used';
+    t.content = null;
+  }
+}
+
 function updateCoinsAndPowerups() {
   for (const c of coins) {
     if (c.taken) continue;
@@ -329,7 +523,7 @@ function updateCoinsAndPowerups() {
     p.vy += GRAVITY;
     p.y += p.vy;
     for (const t of tiles) {
-      if ((t.type === 'ground' || t.type === 'platform') && intersect({ x: p.x, y: p.y, w: 16, h: 16 }, t)) {
+      if (isSolid(t) && intersect({ x: p.x, y: p.y, w: 16, h: 16 }, t)) {
         if (p.vy > 0) { p.y = t.y - 16; p.vy = 0; }
       }
     }
@@ -350,6 +544,13 @@ function updateFireballs() {
     for (const t of tiles) {
       if ((t.type === 'ground' || t.type === 'platform') && intersect({ x: f.x, y: f.y, w: 8, h: 8 }, t)) { hit = true; break; }
     }
+    for (const e of enemies) {
+      if (e.state !== 'dead' && intersect({ x: f.x, y: f.y, w: 8, h: 8 }, e.rect)) {
+        killEnemy(e);
+        hit = true;
+        break;
+      }
+    }
     if (hit || f.life <= 0) fireballs.splice(i, 1);
   }
 }
@@ -365,6 +566,78 @@ function updateFloats() {
     const f = floats[i];
     f.y += f.vy; f.life--;
     if (f.life <= 0) floats.splice(i, 1);
+  }
+}
+
+function updateEnemies() {
+  for (const e of enemies) e.update();
+}
+
+function killEnemy(e) {
+  e.state = 'dead'; e.dead = true; e.stompTimer = 20;
+  if (e.type === 'goomba') e.h = 14;
+  spawnParticles(e.x + e.w / 2, e.y + e.h / 2, e.type === 'goomba' ? '#a04000' : '#27ae60', 8);
+  addFloat(e.x + e.w / 2, e.y, '+100');
+  score += 100;
+}
+
+function checkEnemyCollisions() {
+  for (const e of enemies) {
+    if (e.state === 'dead') continue;
+    if (!intersect(player.rect, e.rect)) continue;
+
+    // ¿Estómpara? (cayendo y por encima del enemigo)
+    const stomp = player.vy > 0 && player.prevY + player.h <= e.y + e.h / 2 + 4;
+
+    if (stomp) {
+      if (e.type === 'goomba') {
+        killEnemy(e);
+        player.vy = -7;
+        player.jumpsLeft = MAX_JUMPS;
+      } else {
+        // Koopa
+        if (e.state === 'walk') {
+          e.state = 'shell';
+          e.h = 16;
+          e.y += 16;
+          e.vx = 0;
+          player.vy = -7;
+          player.jumpsLeft = MAX_JUMPS;
+          score += 100;
+          addFloat(player.x + player.w / 2, player.y, '+100');
+        } else if (e.state === 'shell') {
+          // Patear caparazón (quieto o rodando)
+          const dir = player.x < e.x ? -1 : 1;
+          e.vx = dir * 5;
+          player.vy = -6;
+          player.jumpsLeft = MAX_JUMPS;
+          spawnParticles(e.x + e.w / 2, e.y + e.h / 2, '#27ae60', 6);
+        }
+      }
+    } else {
+      // Contacto lateral
+      if (e.state === 'shell' && Math.abs(e.vx) > 0.3) {
+        // Patear caparazón rodando de lado
+        const dir = player.x < e.x ? -1 : 1;
+        e.vx = dir * 5;
+        player.vy = -6;
+      } else {
+        // Daño al jugador: se encoge o muere si es pequeño
+        player.die();
+      }
+    }
+  }
+}
+
+function updateShellsVsEnemies() {
+  for (const e of enemies) {
+    if (e.state !== 'shell' || Math.abs(e.vx) <= 0.3) continue;
+    for (const o of enemies) {
+      if (o === e || o.state === 'dead') continue;
+      if (intersect(e.rect, o.rect)) {
+        killEnemy(o);
+      }
+    }
   }
 }
 
@@ -389,10 +662,33 @@ function drawLevel(camX) {
   // Tiles sólidos y plataformas
   for (const t of tiles) {
     if (t.type === 'coin' || t.type === 'mushroom' || t.type === 'flower') continue;
-    ctx.fillStyle = t.type === 'ground' ? '#2ecc71' : '#95a5a6';
+    if (t.type === 'ground') ctx.fillStyle = '#2ecc71';
+    else if (t.type === 'platform') ctx.fillStyle = '#95a5a6';
+    else if (t.type === 'pipe') ctx.fillStyle = '#27ae60';
+    else if (t.type === 'brick') ctx.fillStyle = '#c0392b';
+    else if (t.type === 'question') ctx.fillStyle = '#f1c40f';
+    else if (t.type === 'used') ctx.fillStyle = '#bdc3c7';
+    else ctx.fillStyle = '#95a5a6';
     ctx.fillRect(t.x, t.y, t.w, t.h);
     ctx.strokeStyle = 'rgba(0,0,0,0.25)';
     ctx.strokeRect(t.x, t.y, t.w, t.h);
+
+    // Detalles visuales
+    if (t.type === 'pipe') {
+      ctx.fillStyle = '#1e8449';
+      ctx.fillRect(t.x, t.y, t.w, 7);
+      ctx.fillStyle = '#27ae60';
+      ctx.fillRect(t.x + 2, t.y + 2, t.w - 4, 4);
+    }
+    if (t.type === 'brick') {
+      ctx.strokeStyle = '#a93226';
+      ctx.strokeRect(t.x + 2, t.y + 2, t.w - 4, t.h - 4);
+    }
+    if (t.type === 'question') {
+      ctx.fillStyle = '#b7950b';
+      ctx.font = 'bold 22px Arial';
+      ctx.fillText('?', t.x + t.w / 2 - 6, t.y + t.h - 4);
+    }
   }
 
   // Monedas amarillas
@@ -418,6 +714,9 @@ function drawLevel(camX) {
       ctx.fillRect(p.x + 4, p.y + 4, 8, 8);
     }
   }
+
+  // Enemigos
+  for (const e of enemies) e.draw(camX);
 
   // Bolas de fuego
   for (const f of fireballs) {
@@ -486,6 +785,9 @@ function loop() {
   player.applyPhysics();
   updateCoinsAndPowerups();
   updateFireballs();
+  updateEnemies();
+  updateShellsVsEnemies();
+  checkEnemyCollisions();
   updateParticles();
   updateFloats();
 
