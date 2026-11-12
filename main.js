@@ -447,7 +447,7 @@ class Player {
   }
 }
 
-const player = new Player(TILE * 2, (ROWS - 2) * TILE - 40);
+const player = new Player(TILE * 3, (ROWS - 2) * TILE - sizeFor(STATE.SMALL).h);
 
 // ==================== Estado inicial (para reinicio completo) ====================
 let initialTiles = null;
