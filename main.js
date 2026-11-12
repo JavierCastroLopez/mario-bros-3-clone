@@ -11,6 +11,7 @@ const DASH_FRAMES = 10;
 const DASH_COOLDOWN = 40;
 const JUMP_FORCE = -15;
 const MAX_JUMPS = 2;
+const MAX_FALL_SPEED = 25; // velocidad terminal de caída (fixea A1 y B2)
 const TILE = 32;
 
 // Estados del jugador: 0=pequeño, 1=grande (hongo), 2=fuego (flor)
@@ -60,7 +61,6 @@ const floats = [];
 const enemies = [];
 
 let gameWon = false;
-let winShown = false;
 
 function addTile(x, y, type, content) {
   tiles.push({ x: x * TILE, y: y * TILE, w: TILE, h: TILE, type, content });
@@ -300,9 +300,11 @@ class Player {
   input() {
     if (this.dead) return;
     const moving = keys.left || keys.right;
-    if (keys.right) { this.facing = 1; this.vx += ACCEL; }
-    if (keys.left) { this.facing = -1; this.vx -= ACCEL; }
-    if (!moving) this.vx *= FRICTION;
+    if (this.dashTimer <= 0) { // B4: sin aceleración ni fricción durante el dash
+      if (keys.right) { this.facing = 1; this.vx += ACCEL; }
+      if (keys.left) { this.facing = -1; this.vx -= ACCEL; }
+      if (!moving) this.vx *= FRICTION;
+    }
 
     if (pressed('Shift') && this.dashCd <= 0 && this.dashTimer <= 0) {
       this.dashTimer = DASH_FRAMES; this.dashCd = DASH_COOLDOWN;
@@ -332,6 +334,7 @@ class Player {
   applyPhysics() {
     this.prevY = this.y;
     this.vy += GRAVITY;
+    if (this.vy > MAX_FALL_SPEED) this.vy = MAX_FALL_SPEED; // B2: tope de caída
     if (this.dashTimer > 0) this.dashTimer--;
     if (this.dashCd > 0) this.dashCd--;
     if (this.fireCd > 0) this.fireCd--;
@@ -452,6 +455,8 @@ let initialPowerUps = null;
 let initialEnemies = null;
 let initialScore = 0;
 let initialCoinCount = 0;
+let score = 0;
+let coinCount = 0;
 
 function captureInitialState() {
   initialTiles = tiles.map(t => ({ ...t }));
@@ -479,10 +484,14 @@ function resetLevel() {
     en.dead = e.dead;
     en.stompTimer = e.stompTimer;
     en.vx = e.vx;
+    en.facing = e.facing; // A2: restaurar orientación del enemigo
     return en;
   }));
   score = initialScore;
   coinCount = initialCoinCount;
+  fireballs.length = 0;   // M2: no dejar bolas de fuego huérfanas tras reiniciar
+  particles.length = 0;   // M2: limpiar partículas
+  floats.length = 0;      // M2: limpiar textos flotantes
 }
 
 captureInitialState();
@@ -577,7 +586,7 @@ function updateEnemies() { for (const e of enemies) e.update(); }
 
 function killEnemy(e) {
   e.state = 'dead'; e.dead = true; e.stompTimer = 20;
-  if (e.type === 'goomba') e.h = 14;
+  if (e.type === 'goomba') { e.y += e.h - 14; e.h = 14; } // B5: mantener base en el suelo
   spawnParticles(e.x + e.w / 2, e.y + e.h / 2, e.type === 'goomba' ? '#a04000' : '#27ae60', 8);
   addFloat(e.x + e.w / 2, e.y, '+100'); score += 100;
 }
@@ -587,18 +596,18 @@ function checkEnemyCollisions() {
     if (e.state === 'dead') continue;
     if (!intersect(player.rect, e.rect)) continue;
 
-    const stomp = player.vy > 0 && player.prevY + player.h <= e.y + e.h / 2 + 4;
+    const stomp = player.vy > 0 && player.y + player.h <= e.y + e.h / 2 + 4; // A1: stomp basado en posición actual del pie
 
     if (stomp) {
-      if (e.type === 'goomba') { killEnemy(e); player.vy = -7; player.jumpsLeft = MAX_JUMPS; }
+      if (e.type === 'goomba') { killEnemy(e); player.vy = -7; }
       else {
         if (e.state === 'walk') {
           e.state = 'shell'; e.h = 16; e.y += 16; e.vx = 0;
-          player.vy = -7; player.jumpsLeft = MAX_JUMPS; score += 100;
+          player.vy = -7; score += 100;
           addFloat(player.x + player.w / 2, player.y, '+100');
         } else if (e.state === 'shell') {
           const dir = player.x < e.x ? -1 : 1;
-          e.vx = dir * 5; player.vy = -6; player.jumpsLeft = MAX_JUMPS;
+          e.vx = dir * 5; player.vy = -6;
           spawnParticles(e.x + e.w / 2, e.y + e.h / 2, '#27ae60', 6);
         }
       }
@@ -622,8 +631,6 @@ function updateShellsVsEnemies() {
 }
 
 // ==================== Estado del juego ====================
-let score = 0;
-let coinCount = 0;
 let camX = 0;
 
 // ==================== Dibujo ====================
@@ -741,9 +748,6 @@ function drawHUD() {
 
 // ==================== Bucle ====================
 function loop() {
-  if (gameWon && !winShown) {
-    winShown = true;
-  }
 
   if (player.dead && (pressed('ArrowUp') || pressed(' '))) {
     resetLevel();
@@ -753,13 +757,22 @@ function loop() {
   }
 
   if (gameWon && (pressed('ArrowUp') || pressed(' '))) {
-    gameWon = false; winShown = false;
+    gameWon = false;
     score = 0; coinCount = 0; camX = 0;
     coins.forEach(c => c.taken = false);
     powerUps.forEach(p => p.taken = false);
     tiles.forEach(t => { if (t.type === 'used') t.type = t.type === 'used' ? (t.content ? 'question' : 'brick') : t.type; });
     player.reset(TILE * 2, (ROWS - 2) * TILE - 40);
-    enemies.forEach(e => { e.state = 'walk'; e.dead = false; e.stompTimer = 0; e.vx = e.facing * e.walkSpeed; e.x = e.x; });
+    enemies.length = 0;
+    enemies.push(...initialEnemies.map(e => { // M1: restaurar enemigos desde sus spawns
+      const en = new Enemy(e.x, e.y, e.type);
+      en.state = 'walk';
+      en.dead = false;
+      en.stompTimer = 0;
+      en.facing = e.facing;
+      en.vx = e.facing * e.walkSpeed;
+      return en;
+    }));
     consume('ArrowUp'); consume(' ');
   }
 
