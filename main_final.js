@@ -786,9 +786,6 @@ function loop() {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // DEBUG: texto para verificar que el código nuevo se ejecuta
-  ctx.fillStyle = '#ff0000'; ctx.font = 'bold 36px Arial'; ctx.fillText('JUGADOR: ' + Math.round(player.x) + ',' + Math.round(player.y), 20, 50);
-
   if (!gameWon) {
     player.input();
     player.applyPhysics();
