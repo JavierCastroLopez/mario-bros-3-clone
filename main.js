@@ -425,6 +425,7 @@ class Player {
     ctx.save(); ctx.translate(this.x - camX, this.y);
 
     ctx.fillStyle = c; ctx.fillRect(0, 0, this.w, this.h);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(0, 0, this.w, this.h);
 
     if (this.state !== STATE.SMALL) {
       ctx.fillStyle = '#b8860b';
