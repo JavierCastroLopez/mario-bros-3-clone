@@ -761,7 +761,9 @@ function loop() {
     score = 0; coinCount = 0; camX = 0;
     coins.forEach(c => c.taken = false);
     powerUps.forEach(p => p.taken = false);
-    tiles.forEach(t => { if (t.type === 'used') t.type = t.type === 'used' ? (t.content ? 'question' : 'brick') : t.type; });
+    fireballs.length = 0; particles.length = 0; floats.length = 0;
+    tiles.length = 0;
+    tiles.push(...initialTiles.map(t => ({ ...t })));
     player.reset(TILE * 2, (ROWS - 2) * TILE - 40);
     enemies.length = 0;
     enemies.push(...initialEnemies.map(e => { // M1: restaurar enemigos desde sus spawns
